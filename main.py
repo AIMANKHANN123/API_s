@@ -24,7 +24,7 @@ headers = {
 }
 
 # -----------------------
-# 🧠 Detect Question Type
+# Detect Question Type
 # -----------------------
 def detect_question_type(question: str) -> str:
     q = question.lower()
@@ -39,24 +39,44 @@ def detect_question_type(question: str) -> str:
     return "open-ended"
 
 # -----------------------
-# 💡 Generate Questions from Prompt
+# Generate Questions from Prompt
 # -----------------------
-def generate_questions_from_prompt(prompt: str, num: int = 5):
+def generate_questions_from_prompt(prompt: str, num: int):
+    """
+    Generate up to num questions dynamically
+    """
     base_topic = re.sub(r"generate.*?about", "", prompt, flags=re.IGNORECASE).strip()
     base_topic = base_topic if base_topic else "workplace"
+
     templates = [
         f"How satisfied are you with {base_topic}?",
         f"Do you feel confident about {base_topic} in your team?",
         f"What can improve {base_topic} in your organization?",
         f"On a scale of 1-5, how would you rate {base_topic}?",
-        f"How likely are you to recommend our {base_topic} practices to others?"
+        f"How likely are you to recommend our {base_topic} practices to others?",
+        f"Do you think {base_topic} impacts your daily work positively?",
+        f"What suggestions do you have to improve {base_topic}?",
+        f"Have you received enough support regarding {base_topic}?",
+        f"Would you say {base_topic} aligns with company goals?",
+        f"How can leadership enhance {base_topic} initiatives?",
+        f"What challenges do you face regarding {base_topic}?",
+        f"On a scale of 1-10, how confident are you about {base_topic} outcomes?",
+        f"Is {base_topic} something you discuss with your manager?",
+        f"Do you think your peers understand the importance of {base_topic}?",
+        f"How often do you participate in activities related to {base_topic}?",
+        f"Would you like more training about {base_topic}?",
+        f"What motivates you to engage with {base_topic}?",
+        f"How can your team better approach {base_topic}?",
+        f"Do you believe {base_topic} contributes to company success?",
+        f"How important is {base_topic} for your job satisfaction?"
     ]
+
     random.shuffle(templates)
     selected = templates[:num]
     return [{"question": q, "type": detect_question_type(q)} for q in selected]
 
 # -----------------------
-# 💾 Save Chat History
+# Save Chat History
 # -----------------------
 def save_to_history(prompt, results):
     history_file = "chat_history.json"
@@ -77,31 +97,40 @@ def save_to_history(prompt, results):
         json.dump(data, f, indent=4)
 
 # -----------------------
-# 🌐 Root Route
+# Root Route
 # -----------------------
 @app.get("/")
 def home():
     return {"message": "Pulse AI Question Generator API 🚀"}
 
 # -----------------------
-# 💬 POST /generate (Chatbot-like)
+# POST /generate
 # -----------------------
 @app.post("/generate")
 def generate_from_prompt(data: dict = Body(...)):
     prompt = data.get("prompt", "")
+    count = data.get("count", None)
+
     if not prompt:
         return {"error": "Please provide a prompt text."}
 
-    generated = generate_questions_from_prompt(prompt)
-    random.shuffle(generated)
+    # 🔹 Handle count logic
+    if count is not None:
+        try:
+            num = int(count)
+        except ValueError:
+            num = random.randint(5, 12)
+    else:
+        num = random.randint(5, 12)
 
-    # 💾 Save chat to history
+    generated = generate_questions_from_prompt(prompt, num=num)
+    random.shuffle(generated)
     save_to_history(prompt, generated)
 
     return {"prompt": prompt, "generated_count": len(generated), "results": generated}
 
 # -----------------------
-# 📜 GET /history (View Chat History)
+# GET /history
 # -----------------------
 @app.get("/history")
 def get_chat_history():
