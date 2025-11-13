@@ -1,142 +1,81 @@
-import json
-import os
 import random
 import re
-from datetime import datetime
 
-import requests
 from fastapi import Body, FastAPI
+from pydantic import BaseModel
 
 app = FastAPI(title="Pulse AI Question Generator")
 
-# -----------------------
-# 🔑 API Config
-# -----------------------
-PULSE_BEARER_TOKEN = "3673|1Cg9jkntwA0827JLsmIoUoR4E2hOj2sLkMwEYF8dcdd9ed59"
-COMPANY_ID = "4"
-BASE_URL = "https://pulse-survey.ospreyibs.com/api/v1"
+class QuestionRequest(BaseModel):
+    prompt: str
+    count: int | None = None
 
-headers = {
-    "Authorization": f"Bearer {PULSE_BEARER_TOKEN}",
-    "Company-Id": COMPANY_ID,
-    "Accept": "application/json",
-    "Content-Type": "application/json"
-}
-
-# -----------------------
-# Detect Question Type
-# -----------------------
-def detect_question_type(question: str) -> str:
-    q = question.lower()
-    if re.search(r"(on a scale of|how likely|1-10|1 to 10|rate.*10|0-10|0 to 10)", q):
-        return "nps-style"
-    if re.search(r"(how satisfied|rate|scale\s*1-5|1 to 5)", q):
-        return "scale"
-    if re.search(r"(do you|have you|is your|are you|would you|did you|can you)", q):
-        return "binary"
-    if re.search(r"(why|what|how can|describe|explain|suggest|improve)", q):
-        return "open-ended"
-    return "open-ended"
-
-# -----------------------
-# Generate Questions from Prompt
-# -----------------------
-def generate_questions_from_prompt(prompt: str, num: int):
-    """
-    Generate up to num questions dynamically
-    """
-    base_topic = re.sub(r"generate.*?about", "", prompt, flags=re.IGNORECASE).strip()
-    base_topic = base_topic if base_topic else "workplace"
-
+def create_unique_questions(topic: str, n: int):
     templates = [
-        f"How satisfied are you with {base_topic}?",
-        f"Do you feel confident about {base_topic} in your team?",
-        f"What can improve {base_topic} in your organization?",
-        f"On a scale of 1-5, how would you rate {base_topic}?",
-        f"How likely are you to recommend our {base_topic} practices to others?",
-        f"Do you think {base_topic} impacts your daily work positively?",
-        f"What suggestions do you have to improve {base_topic}?",
-        f"Have you received enough support regarding {base_topic}?",
-        f"Would you say {base_topic} aligns with company goals?",
-        f"How can leadership enhance {base_topic} initiatives?",
-        f"What challenges do you face regarding {base_topic}?",
-        f"On a scale of 1-10, how confident are you about {base_topic} outcomes?",
-        f"Is {base_topic} something you discuss with your manager?",
-        f"Do you think your peers understand the importance of {base_topic}?",
-        f"How often do you participate in activities related to {base_topic}?",
-        f"Would you like more training about {base_topic}?",
-        f"What motivates you to engage with {base_topic}?",
-        f"How can your team better approach {base_topic}?",
-        f"Do you believe {base_topic} contributes to company success?",
-        f"How important is {base_topic} for your job satisfaction?"
+        f"How satisfied are you with {topic}?",
+        f"What motivates you most about {topic}?",
+        f"Do you feel {topic} helps improve your team's performance?",
+        f"What challenges do you face in maintaining {topic}?",
+        f"How can leadership enhance {topic} across teams?",
+        f"On a scale of 1–10, how confident are you about {topic} results?",
+        f"Do you think {topic} impacts your productivity positively?",
+        f"How would you rate communication around {topic}?",
+        f"Would you recommend our approach to {topic} to others?",
+        f"How often do you engage in activities related to {topic}?",
+        f"What suggestions do you have to strengthen {topic}?",
+        f"Do you feel supported by management regarding {topic}?",
+        f"How can your team better handle {topic} issues?",
+        f"What best practices could improve {topic}?",
+        f"How important is {topic} for achieving company goals?",
+        f"Do you think your peers understand the value of {topic}?",
+        f"What’s one change you’d like to see in how we approach {topic}?",
+        f"Have you received feedback or recognition related to {topic}?",
+        f"How would you describe your experience with {topic}?",
+        f"What steps can improve awareness around {topic}?",
+        f"How well does {topic} align with your personal growth?",
+        f"Do you believe {topic} contributes to job satisfaction?",
+        f"What are the barriers preventing better {topic}?",
+        f"How can {topic} be measured effectively?",
+        f"Do you think our company culture supports {topic}?",
     ]
-
     random.shuffle(templates)
-    selected = templates[:num]
-    return [{"question": q, "type": detect_question_type(q)} for q in selected]
+    selected = (templates * ((n // len(templates)) + 1))[:n]
 
-# -----------------------
-# Save Chat History
-# -----------------------
-def save_to_history(prompt, results):
-    history_file = "chat_history.json"
-    if os.path.exists(history_file):
-        with open(history_file, "r") as f:
-            data = json.load(f)
-    else:
-        data = []
+    question_types = ["binary", "scale", "open-ended", "nps-style"]
+    return [{"question": q, "type": random.choice(question_types)} for q in selected]
 
-    chat_entry = {
-        "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-        "prompt": prompt,
-        "response": results
-    }
-
-    data.append(chat_entry)
-    with open(history_file, "w") as f:
-        json.dump(data, f, indent=4)
-
-# -----------------------
-# Root Route
-# -----------------------
 @app.get("/")
-def home():
-    return {"message": "Pulse AI Question Generator API 🚀"}
+def read_root():
+    return {"message": "Pulse AI Question Generator is running. Use /generate endpoint to POST."}
 
-# -----------------------
-# POST /generate
-# -----------------------
 @app.post("/generate")
-def generate_from_prompt(data: dict = Body(...)):
-    prompt = data.get("prompt", "")
-    count = data.get("count", None)
+def generate_questions(req: QuestionRequest = Body(...)):
+    prompt = req.prompt.lower()
+    topics_data = []
 
-    if not prompt:
-        return {"error": "Please provide a prompt text."}
-
-    # 🔹 Handle count logic
-    if count is not None:
-        try:
-            num = int(count)
-        except ValueError:
-            num = random.randint(5, 12)
+    # Improved regex to detect multiple "X questions about Y" patterns
+    matches = re.findall(r"(\d+)\s*(?:questions\s*)?about\s*([a-zA-Z\s]+?)(?=\s+and\s+\d+\s*questions\s*about|$)", prompt)
+    
+    if matches:
+        for count, topic in matches:
+            count = min(int(count), 100)
+            topic = topic.strip()
+            questions = create_unique_questions(topic, count)
+            topics_data.append({
+                "topic": topic,
+                "count": len(questions),
+                "questions": questions
+            })
     else:
-        num = random.randint(5, 12)
-
-    generated = generate_questions_from_prompt(prompt, num=num)
-    random.shuffle(generated)
-    save_to_history(prompt, generated)
-
-    return {"prompt": prompt, "generated_count": len(generated), "results": generated}
-
-# -----------------------
-# GET /history
-# -----------------------
-@app.get("/history")
-def get_chat_history():
-    history_file = "chat_history.json"
-    if not os.path.exists(history_file):
-        return {"message": "No history found yet."}
-    with open(history_file, "r") as f:
-        data = json.load(f)
-    return {"total_chats": len(data), "chats": data}
+        topic_match = re.search(r"about\s+([\w\s]+)", prompt)
+        topic = topic_match.group(1).strip() if topic_match else "workplace"
+        count = min(req.count if req.count else 10, 100)
+        questions = create_unique_questions(topic, count)
+        topics_data.append({
+            "topic": topic,
+            "count": len(questions),
+            "questions": questions
+        })
+    
+    total = sum([t["count"] for t in topics_data])
+    return {"prompt": req.prompt, "total_generated": total, "results": topics_data}
