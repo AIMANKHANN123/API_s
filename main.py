@@ -53,9 +53,16 @@ def generate_questions(req: QuestionRequest = Body(...)):
     prompt = req.prompt.lower()
     topics_data = []
 
-    # Improved regex to detect multiple "X questions about Y" patterns
-    matches = re.findall(r"(\d+)\s*(?:questions\s*)?about\s*([a-zA-Z\s]+?)(?=\s+and\s+\d+\s*questions\s*about|$)", prompt)
-    
+    # Multiple patterns support
+    patterns = [
+        r"(\d+)\s*(?:questions\s*)?(?:about|on|regarding)\s*([a-zA-Z\s]+?)(?=\s+and\s+\d+|$)",
+    ]
+
+    matches = []
+    for p in patterns:
+        matches += re.findall(p, prompt)
+
+    # MULTIPLE TOPICS FOUND
     if matches:
         for count, topic in matches:
             count = min(int(count), 100)
@@ -66,16 +73,28 @@ def generate_questions(req: QuestionRequest = Body(...)):
                 "count": len(questions),
                 "questions": questions
             })
+
     else:
-        topic_match = re.search(r"about\s+([\w\s]+)", prompt)
-        topic = topic_match.group(1).strip() if topic_match else "workplace"
-        count = min(req.count if req.count else 10, 100)
+        # SINGLE TOPIC DETECTION
+        single_match = re.search(r"(?:about|on|regarding)\s+([a-zA-Z\s]+)", prompt)
+        if single_match:
+            topic = single_match.group(1).strip()
+        else:
+            # fallback: find last noun-like word
+            words = prompt.split()
+            topic = words[-1]
+
+        count = req.count if req.count else 10
+        count = min(count, 100)
+
         questions = create_unique_questions(topic, count)
         topics_data.append({
             "topic": topic,
             "count": len(questions),
             "questions": questions
         })
-    
-    total = sum([t["count"] for t in topics_data])
+
+    total = sum(t["count"] for t in topics_data)
     return {"prompt": req.prompt, "total_generated": total, "results": topics_data}
+
+
