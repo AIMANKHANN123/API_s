@@ -1,15 +1,27 @@
+# server.py
+import json
+import os
 import random
 import re
 
+import requests
+from dotenv import load_dotenv
 from fastapi import Body, FastAPI
 from pydantic import BaseModel
 
-app = FastAPI(title="Pulse AI Question Generator")
+# Load environment variables
+load_dotenv()
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+
+app = FastAPI(title="Pulse AI Question Generator (Gemini + Fallback)")
 
 class QuestionRequest(BaseModel):
     prompt: str
     count: int | None = None
 
+# -------------------------
+# Template fallback generator
+# -------------------------
 def create_unique_questions(topic: str, n: int):
     templates = [
         f"How satisfied are you with {topic}?",
@@ -44,50 +56,87 @@ def create_unique_questions(topic: str, n: int):
     question_types = ["binary", "scale", "open-ended", "nps-style"]
     return [{"question": q, "type": random.choice(question_types)} for q in selected]
 
+# -------------------------
+# Gemini AI call function
+# -------------------------
+def call_gemini(prompt: str, count: int):
+    structured_prompt = (
+        f"Generate exactly {count} survey questions on '{prompt}'. "
+        "Use types: binary, scale, nps-style, open-ended. "
+        "Return ONLY a JSON array of objects with keys 'question' and 'type'. "
+        "Do NOT include any explanation, markdown, or extra text."
+    )
+
+    model_name = "models/gemini-2.5-flash-preview-05-20"
+    url = f"https://generativelanguage.googleapis.com/v1beta/{model_name}:generateContent?key={GEMINI_API_KEY}"
+
+    payload = {"contents": [{"parts": [{"text": structured_prompt}]}]}
+
+    try:
+        resp = requests.post(url, json=payload, timeout=20)
+        ai_resp = resp.json()
+        text = ai_resp["candidates"][0]["content"]["parts"][0]["text"]
+        text = re.sub(r"^```(json)?", "", text, flags=re.IGNORECASE)
+        text = re.sub(r"```$", "", text)
+        text = text.strip()
+        match = re.search(r'(\[.*\]|\{.*\})', text, re.DOTALL)
+        if match:
+            text = match.group(1)
+        questions = json.loads(text)
+        return questions
+    except Exception as e:
+        print("Gemini AI failed:", e)
+        return []
+
+# -------------------------
+# Root endpoint
+# -------------------------
 @app.get("/")
 def read_root():
     return {"message": "Pulse AI Question Generator is running. Use /generate endpoint to POST."}
 
+# -------------------------
+# Generate questions endpoint
+# -------------------------
 @app.post("/generate")
 def generate_questions(req: QuestionRequest = Body(...)):
     prompt = req.prompt.lower()
     topics_data = []
 
-    # Multiple patterns support
+    # Detect multiple topics
     patterns = [
         r"(\d+)\s*(?:questions\s*)?(?:about|on|regarding)\s*([a-zA-Z\s]+?)(?=\s+and\s+\d+|$)",
     ]
-
     matches = []
     for p in patterns:
         matches += re.findall(p, prompt)
 
-    # MULTIPLE TOPICS FOUND
     if matches:
         for count, topic in matches:
             count = min(int(count), 100)
             topic = topic.strip()
-            questions = create_unique_questions(topic, count)
+            questions = call_gemini(topic, count)
+            if not questions:
+                questions = create_unique_questions(topic, count)
             topics_data.append({
                 "topic": topic,
                 "count": len(questions),
                 "questions": questions
             })
-
     else:
-        # SINGLE TOPIC DETECTION
         single_match = re.search(r"(?:about|on|regarding)\s+([a-zA-Z\s]+)", prompt)
         if single_match:
             topic = single_match.group(1).strip()
         else:
-            # fallback: find last noun-like word
             words = prompt.split()
             topic = words[-1]
 
         count = req.count if req.count else 10
         count = min(count, 100)
+        questions = call_gemini(topic, count)
+        if not questions:
+            questions = create_unique_questions(topic, count)
 
-        questions = create_unique_questions(topic, count)
         topics_data.append({
             "topic": topic,
             "count": len(questions),
@@ -96,5 +145,3 @@ def generate_questions(req: QuestionRequest = Body(...)):
 
     total = sum(t["count"] for t in topics_data)
     return {"prompt": req.prompt, "total_generated": total, "results": topics_data}
-
-
